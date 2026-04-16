@@ -1,0 +1,133 @@
+#include <ArduinoBLE.h>
+#include <Wire.h>
+#include "MS5837.h"
+
+MS5837 sensor;
+
+int preset = 0;
+long previousMillis = 0;
+
+float temperatureDataFirst = 0;
+float depthDataFirst = 0;
+float pressureDataFirst = 0;
+float temperatureDataSecond = 0;
+float depthDataSecond = 0;
+float pressureDataSecond = 0;
+int take = 0;
+
+const int pinRed = 0; // placeholder pins
+const int pinBlue = 0;
+const int pinBlack = 0;
+const int pinGreen = 0;
+
+// BLE Service
+BLEService vertFloatService("181A");
+
+// BLE Characteristics
+BLEUnsignedCharCharacteristic pressureLevelChar("2A6D", BLERead | BLENotify);
+BLEUnsignedCharCharacteristic depthLevelChar("2AB3", BLERead | BLENotify);
+BLEUnsignedCharCharacteristic temperatureLevelChar("2A1F", BLERead | BLENotify);
+BLEUnsignedCharCharacteristic timeLevelChar("2B17", BLERead | BLENotify);
+BLEBoolCharacteristic buttonChar("19B10011-E8F2-537E-4F6C-D104768A1214", BLERead | BLEWrite);
+
+void setup() {
+  Serial.begin(9600);
+  while (!Serial);
+
+  Wire.begin();
+
+  pinMode(LED_BUILTIN, OUTPUT);
+
+  if (!BLE.begin()) {
+    Serial.println("starting Bluetooth® Low Energy module failed!");
+    while (1);
+  }
+
+  while (!sensor.init()) {
+    Serial.println("Init failed!");
+    Serial.println("Are SDA/SCL connected correctly?");
+    delay(5000);
+  }
+
+  sensor.setFluidDensity(997);  // freshwater
+
+  BLE.setLocalName("VertFloat");
+  BLE.setAdvertisedService(vertFloatService);
+
+  vertFloatService.addCharacteristic(pressureLevelChar);
+  vertFloatService.addCharacteristic(depthLevelChar);
+  vertFloatService.addCharacteristic(temperatureLevelChar);
+  vertFloatService.addCharacteristic(timeLevelChar);
+  vertFloatService.addCharacteristic(buttonChar);
+
+  BLE.addService(vertFloatService);
+
+  pressureLevelChar.writeValue((uint8_t)preset);
+
+  BLE.advertise();
+  Serial.println("Bluetooth® device active, waiting for connections...");
+}
+
+void loop() {
+  BLEDevice central = BLE.central();
+
+  if (central) {
+    Serial.print("Connected to central: ");
+    Serial.println(central.address());
+    digitalWrite(LED_BUILTIN, HIGH);
+
+    // stay in this loop while the central is connected
+    while (central.connected()) {
+      // If central wrote to the button characteristic, handle it
+      if (buttonChar.written()) {
+        bool pressed = buttonChar.value(); // true if central wrote 1
+        Serial.print("Button written: ");
+        Serial.println(pressed);
+        // clear previousMillis so timing restarts when pressed
+        if (pressed) previousMillis = millis();
+      }
+
+      // If button is currently true, run periodic sensor updates
+      if (buttonChar.value()) {
+        long currentMillis = millis();
+        if (currentMillis - previousMillis >= 1000) {
+          previousMillis = currentMillis;
+          updateSensors();
+        }
+      }
+
+      // poll ble
+      BLE.poll();
+      delay(10);
+    }
+
+    digitalWrite(LED_BUILTIN, LOW);
+    Serial.print("Disconnected from central: ");
+    Serial.println(central.address());
+  }
+}
+
+void updateSensors() {
+  sensor.read();
+
+  temperatureDataFirst = sensor.temperature();
+  depthDataFirst = sensor.depth();
+  pressureDataFirst = sensor.pressure();
+  take = 1;
+
+  // second read not done
+  temperatureDataSecond = sensor.temperature();
+  depthDataSecond = sensor.depth();
+  pressureDataSecond = sensor.pressure();
+  take = 2;
+
+  // write characteristic values
+  pressureLevelChar.writeValue((uint8_t)pressureDataFirst);
+  depthLevelChar.writeValue((uint8_t)depthDataFirst);
+  temperatureLevelChar.writeValue((uint8_t)temperatureDataFirst);
+
+  // debug print
+  Serial.print("P: "); Serial.print(pressureDataFirst);
+  Serial.print(" D: "); Serial.print(depthDataFirst);
+  Serial.print(" T: "); Serial.println(temperatureDataFirst);
+}
