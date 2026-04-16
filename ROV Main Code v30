@@ -1,0 +1,532 @@
+#include <Servo.h>
+#include <PS2X_lib.h>
+
+//============================================================================================
+//
+// Program:  ROV_Drive_Prototype
+// Date:     20-Feb-2022
+//
+// Authors:  Owen Voorhees and Ben Liebkemann with SEAL Robotics Team
+//
+// Purpose:  This program is provided as a simple example and starting point for basic 
+//           ROV drive software.  It is intended for underwater robotics teams to help
+//           them quickly get a new simple ROV up and running, and can be enhanced and
+//           customized to add features such as automatic depth control, switchable
+//           max power level modes, tilt control, switchable diagnostics modes, etc.
+//
+// Notes:    1) In its initial, simple configuration, this program is intended to work on
+//              an ROV with the following basic configuration:
+//               - Playstation 2 (PS/2) controller.
+//               - 4 HORIZONTAL Blue Robotics (brushless) thrusters
+//                    (mounted in a vectored configuration).
+//               - 2 VERTICAL Blue Robotics (brushless) thrusters.
+//               - Arduino Mega and six Blue Robotics ESCs, all mounted in a control
+//                      box on land (in the dry).
+//               - Single gripper, controlled by a standard servo.
+//
+//           2) The PS2X_lib.h Arduino library is needed in order to read the inputs from the PS/2 controller.
+//              PS/2 controllers are ideal for this simple configuration because their output is analog,
+//              and they can be hooked directly to an Arduino.  See Bill Porter's web page for more 
+//              information on this library:
+//              http://www.billporter.info/2010/06/05/playstation-2-controller-arduino-library-v1-0/.
+//
+// Questions:  If you have questions about this code or about how to build a basic ROV, please feel free to
+//             contact Ned Voorhees by email at ned (at) triad.rr.com or ned.voorhees (at) gmail.com.
+//
+// Modification History:
+//   20-Feb-2022  Initial code v1.0
+//   13-Oct-2022  Modifications and improvements for clarity and diagnostics v2.0
+//   16-Nov-2022  Additional modifications and improvements for clarity and diagnostics v3.0
+//
+//============================================================================================
+
+//============================================================================================
+// Constants and Gobal Variable Set up
+//============================================================================================
+
+
+// Set the maximum total power level for horizontal and vertical operations.
+// This is very important.  If you push the small power supplies beyond
+// the typical 25 amps that they are intended to provide, the output voltage will
+// vary wildly, and sometimes even go negative (which breaks things).  Set these
+// variables for your ROV configuration through trial and error to consume the
+// maximum safe amount of power for your power supply and ROV configuration.
+float HORIZONTAL_MAXIMUM_POWER = 0.5;
+const float VERTICAL_MAXIMUM_POWER = 1;
+
+//DiagnosticsMode
+// Simply change the DIAGNOSTICS_MODE constant to TRUE to enter diagnostics mode, instead of running the main program.
+const bool DIAGNOSTICS_MODE = false;
+
+// Set the speed between 0 and 400 (recommended 100 to 200 at the most)
+const int DIAGNOSTICS_MODE_SPEED = 200;
+
+// how fast the rov turns, sensitivity
+const float TURN_FACTOR = 0.50;
+
+// how fast the rov moves left and right, sensitivity
+const float STRAFE_FACTOR = 1.00;
+
+// how fast the rove moves forward and back, sensitivity
+const float FORWARD_FACTOR = 1.00;
+
+// Set a "deadzone" for ps2 controller joysticks to ignore anything below this level of input.
+const int THRUSTER_DEADZONE = 10;
+
+// Define Gripper related variables and constants
+const int gripperPin = 11;
+int gripperValue = 1500;
+
+// speed at which the gripper opens
+int gripperSpeed = 10;
+
+// range the griper can open and close to
+int gripperRange[2] = {1100, 1900};
+
+// Six position arrays to track the six thrusters
+int thrusterValues[6] = {0, 0, 0, 0, 0, 0};
+int oldThrusterValues[6] = {0, 0, 0, 0, 0, 0};
+
+Servo Thruster1;
+Servo Thruster2;
+Servo Thruster3;
+Servo Thruster4;
+Servo Thruster5;
+Servo Thruster6;
+Servo gripper;
+Servo thrusters[6] = {Thruster1, Thruster2, Thruster3, Thruster4, Thruster5, Thruster6};
+// Recommended to use pins below
+// The Thruster Positions are as follows:
+//   Left Front     T0 
+//   Right Front    T1
+//   Left Rear      T2
+//   Right Rear     T3
+//   Left Vertical  T4
+//   Right Vertical T5
+//const int thrusterPins[6] = { 17, 16, 14, 15, 2, 3};
+const int thrusterPins[6] = { 2, 3, 4, 5, 12, 13};
+
+//-------------------------------------------------------------------//
+// PlayStation2 controller Variables
+//-------------------------------------------------------------------//
+PS2X controller1;                     // Define the ps2 object     //
+boolean controller1Buttons[14];                                   //
+const int controller1_Clock  =  6;   // Clock pin number         //
+const int controller1_Cmd    =  8;   // Command pin number       //
+const int controller1_Att    =  7;   // Attention pin number     //
+const int controller1_Data   =  9;   // Data pin number          //
+//--------------------------------------------------------------------//
+
+//============================================================================================
+// Setup code here, which will run once when the program is started
+//============================================================================================
+void setup() {
+
+  Serial.begin(115200);  //Begin serial communication to the computer
+
+  // Print begin message to clearly see in the output when program is restarted
+  Serial.println();
+  Serial.println();
+  Serial.println(" ========================================================== ");
+  Serial.println(" BEGIN PROGRAM: MATE_ROV_Drive_Prototype                    ");
+  Serial.println("                Version 3.0                                 ");
+  Serial.println("           Boot Type... Stable                              ");
+  Serial.println(" ========================================================== ");
+
+  // Assign pin numbers to each thruster
+  // Also write 1500 to each thrusters (they need 1500 to boot up properly)
+  for (int i = 0; i < 6; i++) {
+    thrusters[i].attach(thrusterPins[i], 1100, 1900);
+    thrusters[i].write(1500);
+  }
+
+  gripper.attach(gripperPin, gripperRange[0], gripperRange[1]);
+  gripper.write(1500);
+
+  //Configure ps2 controller
+  controller1.config_gamepad(controller1_Clock, controller1_Cmd, controller1_Att, controller1_Data, false, false);
+
+  delay(1000);
+  Serial.println(" ----------------- Setup Complete ----------------- ");
+
+  // Conditionally enter DiagnosticsMode, instead of running the real drive program.
+  // Simply change the DIAGNOSTICS_MODE constant to TRUE to enter diagnostics mode, instead of running the main program.
+  if (DIAGNOSTICS_MODE)
+  {
+    DiagnosticsMode();
+  }
+}
+
+//============================================================================================
+// DiagnosticsMode
+// This can be very helpful in troubleshooting to test your Thrusters or other components,
+// independent of the ps2 controller or any other complexities.
+// Note: You may find it helpful to add dip switches to your Arduino to enter various
+//       diagnostics modes for troubleshooting in the field, without having to change
+//       and upload an altered copy of the Arduino drive program.
+//============================================================================================
+void DiagnosticsMode() {
+
+  Serial.println("-----------------------------------------");
+  Serial.println("BEGIN: DIAGNOSTICS MODE");
+
+  while (DIAGNOSTICS_MODE) {
+
+    // Thrusters Testing
+    if (true) {
+      
+      Serial.println("THRUSTER TEST...");
+
+      // Write 1500 to all thrusters
+      for (int i = 0; i < 6; i++) {
+        thrusters[i].write(1500);
+      }
+      delay(5000);
+
+      // Run all thrusters "FORWARD"
+      Serial.println("  All thrusters FORWARD...");
+      for (int i = 0; i < 6; i++) {
+        thrusters[i].write(1500+DIAGNOSTICS_MODE_SPEED);
+      }
+      delay(15000);
+
+      // "ZEROPASS": Write 1500 to all thrusters before changing the direction of them
+      // Brushless motors/thrusters do not like to go from forward to reverse without 
+      // hitting stop (1500) for an instant first.
+      for (int i = 0; i < 6; i++) {
+        thrusters[i].write(1500);
+      }
+      delay(5000);
+
+      // Run all thrusters "REVERSE"
+      Serial.println("  All thrusters REVERSE...");
+      for (int i = 0; i < 6; i++) {
+        thrusters[i].write(1500-DIAGNOSTICS_MODE_SPEED);
+      }
+      delay(15000);
+
+      // "ZEROPASS": Write 1500 to all thrusters before changing the direction of them
+      for (int i = 0; i < 6; i++) {
+        thrusters[i].write(1500);
+      }
+    }
+
+    // Gripper Testing
+    // No gripper in the system now, but something like the below could be used
+    if (false) {
+      Serial.println("GRIPPER TEST...");
+      gripperValue = 1500;
+      int openTime = 10;
+
+      Serial.println("  Opening Gripper ");
+      // open from 1500
+      for(int i=0; i < 400; i++){
+          gripperValue++;          
+          // writes our gripperValue
+          gripper.write(gripperValue);
+          delay(openTime);
+      }
+
+      Serial.println("  Closing Gripper ");
+      // close from 1900 to 1100
+      for(int i=0; i < 800; i++){
+          gripperValue--;          
+          // writes our gripperValue
+          gripper.write(gripperValue);
+          delay(openTime);
+      }
+
+      Serial.println("  Opening Gripper Halfway ");
+      // open from 1100 to 1500
+      for(int i=0; i < 400; i++){
+          gripperValue++;          
+          // writes our gripperValue
+          gripper.write(gripperValue);
+          delay(openTime);
+      }
+      
+    }
+  }
+}
+
+
+//============================================================================================
+// BEGIN MAIN PROGRAM LOOP
+//============================================================================================
+void loop() {
+
+  // Reading both JoySticks x, y
+  int ps2_joysticks[2][2] = { { 0 , 0 } , // Left Joystick (x, y)
+    { 0 , 0 }
+  }; // Right Joystick (x, y)
+  int static ps2_triggers[2] = { 0, 0 }; // Left Trigger, Right Trigger
+  bool static buttons[14]; // List of buttons in this order:
+  // Triangle, Circle, Cross, Square, Dpad Up, Dpad Right, Dpad Down, Dpad Left, L1, L2, R1, R2, Select, Start
+  read_ps2(ps2_joysticks, ps2_triggers, buttons); //Get data from ps2 controller and assign values to the above variables
+
+
+  // PRESCISION MODE CHANGE
+  if(buttons[0]){
+    HORIZONTAL_MAXIMUM_POWER = 0.25;
+  } else if(buttons[1]){
+    HORIZONTAL_MAXIMUM_POWER = 0.50;
+  }
+
+  // TEMP - ALWAYS 75% for the moment
+  HORIZONTAL_MAXIMUM_POWER = 0.75;
+    
+  for(int i = 0; i < 1; i++){
+    Serial.print("HMP: ");
+    Serial.print(HORIZONTAL_MAXIMUM_POWER);
+    Serial.print("     ");
+  }
+
+  //get the left joystick's y axis and map it from -255 to 255 into -400 to 400
+  float forwardValue = ps2_joysticks[1][1] / 255.0 * (400 * HORIZONTAL_MAXIMUM_POWER) * FORWARD_FACTOR;
+
+  //get the left joystick's x axis and map it from -255 to 255 into -400 to 400
+  float strafeValue = ps2_joysticks[1][0] / 255.0 * (400 * HORIZONTAL_MAXIMUM_POWER) * STRAFE_FACTOR;
+
+  // get the right joystick's x axis and map it from -255 to 255 into -400 to 400
+  float turnValue = ps2_joysticks[0][0] / 255.0 * (400 * HORIZONTAL_MAXIMUM_POWER) * TURN_FACTOR;
+
+  // get the right joystick's y axis and map it from -255 to 255 into -400 to 400
+  float upValue = ps2_joysticks[0][1] / 255.0 * (400 * VERTICAL_MAXIMUM_POWER);
+
+  // Pay close attention to the SIGNS in the math below.  This is vector
+  // addition, and accomodates the thrusters mounted at 45 degree angles.
+  // front left
+  thrusterValues[0] = forwardValue + strafeValue + turnValue;
+
+  // front right
+  thrusterValues[1] = forwardValue - strafeValue - turnValue;
+
+  // back left
+  thrusterValues[2] = forwardValue - strafeValue + turnValue;
+
+  // back right
+  thrusterValues[3] = forwardValue + strafeValue - turnValue;
+
+  // vertical thrusters
+  thrusterValues[4] = upValue;
+  thrusterValues[5] = upValue;
+
+  //Apply thruster values to thrusters
+  for (int i = 0; i < 6; i++) {
+
+    // thruster values calculated between -400 to 400, not 1500
+    // therefore, add 1500 to each thruster value to make it between 1900 and 1100
+    thrusterValues[i] += 1500;
+
+    // DEADZONE HANDLING
+    // If we are within the DEADZONE on the ps2 controller joystick, then set the thruster to zero (1500)
+    if ((1500 - THRUSTER_DEADZONE) < thrusterValues[i] && thrusterValues[i] < (1500 + THRUSTER_DEADZONE)) {
+      thrusterValues[i] = 1500;
+    }
+
+    // just in case, ensure values are between 1100 and 1900 limits
+    if (i < 4) {
+      // horizontal thrusters
+      if (thrusterValues[i] > 1500 + (400 * HORIZONTAL_MAXIMUM_POWER)) {
+        thrusterValues[i] = 1500 + (400 * HORIZONTAL_MAXIMUM_POWER);
+      } else if (thrusterValues[i] < 1500 - (400 * HORIZONTAL_MAXIMUM_POWER)) {
+        thrusterValues[i] = 1500 - (400 * HORIZONTAL_MAXIMUM_POWER);
+      }
+    } else {
+      // vertical thrusters
+      if (thrusterValues[i] > 1500 + (400 * VERTICAL_MAXIMUM_POWER)) {
+        thrusterValues[i] = 1500 + (400 * VERTICAL_MAXIMUM_POWER);
+      } else if (thrusterValues[i] < 1500 - (400 * VERTICAL_MAXIMUM_POWER)) {
+        thrusterValues[i] = 1500 - (400 * VERTICAL_MAXIMUM_POWER);
+      }
+
+    }
+
+    // ZEROPASS: if we are jumping past 1500 (Example: 1100 to 1900 or 1650 to 1200), then write a 1500 first.
+    // Brushless motors/thrusters do not like to go from forward to reverse without 
+    // hitting stop (1500) for an instant first.
+    if (oldThrusterValues[i] != 1500 && ((thrusterValues[i] - 1500) / (oldThrusterValues[i] - 1500)) < 0) {
+      // set current thruster values to 1500
+      thrusterValues[i] = 1500;
+    }
+    // after calculating, set current to old
+    oldThrusterValues[i] = thrusterValues[i];
+
+    // write to the thruster
+    thrusters[i].write(thrusterValues[i]);
+
+    // print thruster values
+    Serial.print(" T");
+    Serial.print(i);
+    Serial.print(": ");
+    Serial.print(thrusterValues[i]);
+    
+  }
+
+    Serial.print("      LF_X: ");
+    Serial.print(ps2_joysticks[1][0]);
+
+    Serial.print(" LF_Y: ");
+    Serial.print(ps2_joysticks[1][1]);
+
+    Serial.print("      RT_X: ");
+    Serial.print(ps2_joysticks[0][0]);
+
+    Serial.print(" RT_Y: ");
+    Serial.print(ps2_joysticks[0][1]);
+  
+
+   // If we are pressing the left trigger (and not the right one), open the gripper
+  if(buttons[9]){
+    gripperValue+= gripperSpeed;
+  }
+
+  // If we are pressing the right trigger (and not the left one), close the gripper
+  if(buttons[11]){
+    gripperValue-= gripperSpeed;
+  }
+
+  // ensures gripper values is between 1100 and 1900
+  if(gripperValue > gripperRange[1]){
+    gripperValue = gripperRange[1];
+  } else if(gripperValue < gripperRange[0]){
+    gripperValue = gripperRange[0];
+  }
+
+  // writes our gripperValue
+  gripper.write(gripperValue);
+
+  
+  Serial.print("      Gripper: ");
+  Serial.print(gripperValue);
+
+  Serial.println();
+
+}
+
+//============================================================================================
+// read_ps2
+// Handles all details of reading the ps2 controller.
+//============================================================================================
+
+void read_ps2(int ps2_joysticks[2][2], int ps2_triggers[2], bool buttons[14]) {
+  //-----------------------------------------------------------------------
+  //  PS2 -  Controller input processing, store state of buttons
+  //-----------------------------------------------------------------------
+  controller1.read_gamepad();
+
+  //Triangle
+  if (controller1.ButtonPressed(PSB_GREEN)) {
+    buttons[0] = true;
+  } else if ( controller1.ButtonReleased(PSB_GREEN)) {
+    buttons[0] = false;
+  }
+  //Circle
+  if (controller1.ButtonPressed(PSB_RED)) {
+    buttons[1] = true;
+  } else if ( controller1.ButtonReleased(PSB_RED)) {
+    buttons[1] = false;
+  }
+  //Cross
+  if (controller1.ButtonPressed(PSB_BLUE)) {
+    buttons[2] = true;
+  } else if ( controller1.ButtonReleased(PSB_BLUE)) {
+    buttons[2] = false;
+  }
+  //Square
+  if (controller1.ButtonPressed(PSB_PINK)) {
+    buttons[3] = true;
+  } else if ( controller1.ButtonReleased(PSB_PINK)) {
+    buttons[3] = false;
+  }
+  //D_Up
+  if (controller1.ButtonPressed(PSB_PAD_UP)) {
+    buttons[4] = true;
+  } else if ( controller1.ButtonReleased(PSB_PAD_UP)) {
+    buttons[4] = false;
+  }
+  //D_Right
+  if (controller1.ButtonPressed(PSB_PAD_RIGHT)) {
+    buttons[5] = true;
+  } else if ( controller1.ButtonReleased(PSB_PAD_RIGHT)) {
+    buttons[5] = false;
+  }
+  //D_Down
+  if (controller1.ButtonPressed(PSB_PAD_DOWN)) {
+    buttons[6] = true;
+  } else if ( controller1.ButtonReleased(PSB_PAD_DOWN)) {
+    buttons[6] = false;
+  }
+  //D_Left
+  if (controller1.ButtonPressed(PSB_PAD_LEFT)) {
+    buttons[7] = true;
+  } else if ( controller1.ButtonReleased(PSB_PAD_LEFT)) {
+    buttons[7] = false;
+  }
+
+  //L1
+  if (controller1.ButtonPressed(PSB_L1)) {
+    buttons[8] = true;
+  } else if ( controller1.ButtonReleased(PSB_L1)) {
+    buttons[8] = false;
+  }
+  //L2
+  if (controller1.ButtonPressed(PSB_L2)) {
+    buttons[9] = true;
+  } else if ( controller1.ButtonReleased(PSB_L2)) {
+    buttons[9] = false;
+  }
+  //R1
+  if (controller1.ButtonPressed(PSB_R1)) {
+    buttons[10] = true;
+  } else if ( controller1.ButtonReleased(PSB_R1)) {
+    buttons[10] = false;
+  }
+  //R2
+  if (controller1.ButtonPressed(PSB_R2)) {
+    buttons[11] = true;
+  } else if ( controller1.ButtonReleased(PSB_R2)) {
+    buttons[11] = false;
+  }
+  //Select
+  if (controller1.ButtonPressed(PSB_SELECT)) {
+    buttons[12] = true;
+  } else if ( controller1.ButtonReleased(PSB_SELECT)) {
+    buttons[12] = false;
+  }
+  //Start
+  if (controller1.ButtonPressed(PSB_START)) {
+    buttons[13] = true;
+  } else if ( controller1.ButtonReleased(PSB_START)) {
+    buttons[13] = false;
+  }
+
+  if (controller1.ButtonPressed(PSB_L2)) {
+    ps2_triggers[0] = 1;
+  } else if ( controller1.ButtonReleased(PSB_L2)) {
+    ps2_triggers[0] = 0; //Serial.print("L2 released");
+  }
+  if (controller1.ButtonPressed(PSB_R2)) {
+    ps2_triggers[1] = 1;
+  } else if ( controller1.ButtonReleased(PSB_R2)) {
+    ps2_triggers[1] = 0; //Serial.print("R2 released");
+  }
+  // Serial.print(ps2_triggers[0]);
+  // Serial.print("  ");
+  // Serial.print(ps2_triggers[1]);
+  //-----------------------------------------------------------------------
+  //  Mapping and getting the inputs from the Ps2
+  //  IMPORTANT NOTE: We are inversing the Y axis for both joysticks below
+  //                  with the negative sign.
+  //-----------------------------------------------------------------------
+  // Left Joystick
+  ps2_joysticks[1][0] = map(controller1.Analog(PSS_LX), 0, 255, -255, 255);
+  ps2_joysticks[1][1] = -map(controller1.Analog(PSS_LY), 0, 255, -255, 255);
+
+  // Right Joystick
+  ps2_joysticks[0][0] = map(controller1.Analog(PSS_RX), 0, 255, -255, 255);
+  ps2_joysticks[0][1] = -map(controller1.Analog(PSS_RY), 0, 255, -255, 255);
+}
+//============================================================================================
+// End Program:  ROV_Drive_Prototype
+//============================================================================================
