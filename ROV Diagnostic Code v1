@@ -1,0 +1,158 @@
+include <Servo.h>
+#include <PS2X_lib.h>
+
+//============================================================================================
+//
+// Program:  ROV_Drive_Prototype-Diagnostic
+// Date:     20-Feb-2022
+//
+// Authors:  Owen Voorhees and Ben Liebkemann with SEAL Robotics Team
+//
+// Modified by: Cyclone robotics Club
+//
+// Purpose: Diagnostics
+//
+float HORIZONTAL_MAXIMUM_POWER = 0.5;
+const float VERTICAL_MAXIMUM_POWER = 1;
+
+const bool DIAGNOSTICS_MODE = true;
+
+const int DIAGNOSTICS_MODE_SPEED = 200;
+
+const int gripperPin = 11;
+int gripperValue = 1500;
+
+int gripperSpeed = 10;
+
+int gripperRange[2] = {1100, 1900};
+
+int thrusterValues[6] = {0, 0, 0, 0, 0, 0};
+int oldThrusterValues[6] = {0, 0, 0, 0, 0, 0};
+
+Servo Thruster1;
+Servo Thruster2;
+Servo Thruster3;
+Servo Thruster4;
+Servo Thruster5;
+Servo Thruster6;
+Servo gripper;
+Servo thrusters[6] = {Thruster1, Thruster2, Thruster3, Thruster4, Thruster5, Thruster6};
+
+const int thrusterPins[6] = { 2, 3, 4, 5, 12, 13};
+
+void setup() {
+
+  Serial.begin(115200); 
+
+  Serial.println();
+  Serial.println();
+  Serial.println(" ========================================================== ");
+  Serial.println(" BEGIN PROGRAM: MATE_ROV_Drive_Prototype                    ");
+  Serial.println("                Version 3.0                                 ");
+  Serial.println("           Boot Type... Diagnostic                          ");
+  Serial.println(" ========================================================== ");
+
+  // Assign pin numbers to each thruster
+  // Also write 1500 to each thrusters (they need 1500 to boot up properly)
+  for (int i = 0; i < 6; i++) {
+    thrusters[i].attach(thrusterPins[i], 1100, 1900);
+    thrusters[i].write(1500);
+  }
+
+  gripper.attach(gripperPin, gripperRange[0], gripperRange[1]);
+  gripper.write(1500);
+
+  delay(1000);
+  Serial.println(" ----------------- Setup Complete ----------------- ");
+
+  // Conditionally enter DiagnosticsMode, instead of running the real drive program.
+  // Simply change the DIAGNOSTICS_MODE constant to TRUE to enter diagnostics mode, instead of running the main program.
+  if (DIAGNOSTICS_MODE)
+  {
+    DiagnosticsMode();
+  }
+}
+
+void DiagnosticsMode() {
+
+  Serial.println("-----------------------------------------");
+  Serial.println("BEGIN: DIAGNOSTICS MODE");
+
+  while (DIAGNOSTICS_MODE) {
+
+    // Thrusters Testing
+    if (true) {
+      
+      Serial.println("THRUSTER TEST...");
+
+      // Write 1500 to all thrusters
+      for (int i = 0; i < 6; i++) {
+        thrusters[i].write(1500);
+      }
+      delay(5000);
+
+      // Run all thrusters "FORWARD"
+      Serial.println("  All thrusters FORWARD...");
+      for (int i = 0; i < 6; i++) {
+        thrusters[i].write(1500+DIAGNOSTICS_MODE_SPEED);
+      }
+      delay(15000);
+
+      // "ZEROPASS": Write 1500 to all thrusters before changing the direction of them
+      // Brushless motors/thrusters do not like to go from forward to reverse without 
+      // hitting stop (1500) for an instant first.
+      for (int i = 0; i < 6; i++) {
+        thrusters[i].write(1500);
+      }
+      delay(5000);
+
+      // Run all thrusters "REVERSE"
+      Serial.println("  All thrusters REVERSE...");
+      for (int i = 0; i < 6; i++) {
+        thrusters[i].write(1500-DIAGNOSTICS_MODE_SPEED);
+      }
+      delay(15000);
+
+      // "ZEROPASS": Write 1500 to all thrusters before changing the direction of them
+      for (int i = 0; i < 6; i++) {
+        thrusters[i].write(1500);
+      }
+    }
+
+    // Gripper Testing
+    // No gripper in the system now, but something like the below could be used
+    if (false) {
+      Serial.println("GRIPPER TEST...");
+      gripperValue = 1500;
+      int openTime = 10;
+
+      Serial.println("  Opening Gripper ");
+      // open from 1500
+      for(int i=0; i < 400; i++){
+          gripperValue++;          
+          // writes our gripperValue
+          gripper.write(gripperValue);
+          delay(openTime);
+      }
+
+      Serial.println("  Closing Gripper ");
+      // close from 1900 to 1100
+      for(int i=0; i < 800; i++){
+          gripperValue--;          
+          // writes our gripperValue
+          gripper.write(gripperValue);
+          delay(openTime);
+      }
+
+      Serial.println("  Opening Gripper Halfway ");
+      // open from 1100 to 1500
+      for(int i=0; i < 400; i++){
+          gripperValue++;          
+          // writes our gripperValue
+          gripper.write(gripperValue);
+          delay(openTime);
+      }
+      
+    }
+  }
+}
