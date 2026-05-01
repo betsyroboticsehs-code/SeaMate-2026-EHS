@@ -1,0 +1,57 @@
+import cv2
+from ultralytics import YOLO
+from google.colab.patches import cv2_imshow
+from google.colab import drive
+
+
+# Give access to drive files
+drive.mount('/content/drive')
+
+
+# Load model
+model = YOLO('/content/drive/MyDrive/MATE_STUFF/best.pt')
+
+
+# Image path
+source_img = '/content/drive/MyDrive/MATE_STUFF/PXL_20260430_202336508.jpg'
+
+
+# Look for only the crabs
+results = model.predict(source=source_img, conf=0.5, classes=[1])
+
+# Display
+for result in results:
+    # Smaller bounding boxes
+    annotated_frame = result.plot(line_width=3, font_size=3)
+   
+    count = len(result.boxes)
+    text = f"European Green Crab Count: {count}"
+   
+    h, w, _ = annotated_frame.shape
+
+    # Footer Text Scaling
+    font_scale = w * 0.0008
+    thickness = max(1, int(font_scale * 2))
+   
+    (text_w, text_h), baseline = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, font_scale, thickness)
+
+    # Footer Positioning
+    side_margin = 15
+    bottom_margin = 10
+    y_text_bottom = h - bottom_margin
+   
+    # Draw Footer Bar
+    bar_top = y_text_bottom - text_h - 6
+    bar_right = side_margin + text_w + 15
+    cv2.rectangle(annotated_frame, (side_margin - 8, bar_top), (bar_right, h), (0, 0, 0), -1)
+
+    # Put Footer Text
+    cv2.putText(annotated_frame, text, (side_margin, y_text_bottom),
+                cv2.FONT_HERSHEY_SIMPLEX, font_scale, (0, 255, 0), thickness, cv2.LINE_AA)
+
+    # Resize for Colab display
+    display_w = 800
+    display_h = int(h * (display_w / w))
+    resized_img = cv2.resize(annotated_frame, (display_w, display_h))
+
+    cv2_imshow(resized_img)
